@@ -1271,13 +1271,24 @@ fn reindex_named_table(
 }
 
 /// Maps distinct sort keys to `(position + 1) * scale` in sorted order.
-/// An empty key sorts first, matching Apple's rank-1 default.
+/// An empty key sorts after every named key: live Nano 7G libraries rank
+/// untitled/placeholder rows (NULL/'' names) behind all named rows, not
+/// first.
 fn key_orders<'a>(
     keys: impl Iterator<Item = &'a String>,
     scale: i64,
 ) -> std::collections::HashMap<String, i64> {
     let mut distinct: Vec<String> = keys.map(|key| sort_key(key)).collect();
-    distinct.sort();
+    distinct.sort_by(|a, b| {
+        // Empty keys go last so untitled/placeholder rows rank behind every
+        // named row, matching Apple's observed ordering (e.g. artist '' at
+        // rank 36600 after 366 named artists on Nano 7G fw 1.1.2).
+        match (a.is_empty(), b.is_empty()) {
+            (false, true) => std::cmp::Ordering::Less,
+            (true, false) => std::cmp::Ordering::Greater,
+            _ => a.cmp(b),
+        }
+    });
     distinct.dedup();
     distinct
         .iter()
