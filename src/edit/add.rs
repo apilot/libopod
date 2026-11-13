@@ -339,7 +339,7 @@ fn resolve_named_entity(
         insertion_rank(
             transaction,
             path,
-            &format!("SELECT name FROM {table}"),
+            &format!("SELECT name FROM {table} WHERE name IS NOT NULL"),
             name,
         )? * 100,
     )
@@ -394,7 +394,12 @@ fn resolve_album(
     let pid = *next_pid;
     *next_pid = next_pid.saturating_add(1);
     let name_order = i64::try_from(
-        insertion_rank(transaction, path, "SELECT name FROM album", album_name)? * 100,
+        insertion_rank(
+            transaction,
+            path,
+            "SELECT name FROM album WHERE name IS NOT NULL",
+            album_name,
+        )? * 100,
     )
     .unwrap_or(i64::MAX);
     let artist_order = artist_order_rank(transaction, path, artist_pid)?;
@@ -433,9 +438,15 @@ fn artist_order_rank(transaction: &Transaction<'_>, path: &Path, artist_pid: i64
             |row| row.get(0),
         )
         .map_err(|source| sqlite_error("look up album artist", path, source))?;
-    let rank =
-        i64::try_from(insertion_rank(transaction, path, "SELECT name FROM artist", &name)? * 100)
-            .unwrap_or(i64::MAX);
+    let rank = i64::try_from(
+        insertion_rank(
+            transaction,
+            path,
+            "SELECT name FROM artist WHERE name IS NOT NULL",
+            &name,
+        )? * 100,
+    )
+    .unwrap_or(i64::MAX);
     Ok(rank)
 }
 
@@ -481,7 +492,12 @@ fn resolve_genre(transaction: &Transaction<'_>, path: &Path, genre: Option<&str>
         .query_row("SELECT MAX(id) FROM genre_map", [], |row| row.get(0))
         .map_err(|source| sqlite_error("read genre counter", path, source))?;
     let id = next.unwrap_or(0).saturating_add(1);
-    let rank = insertion_rank(transaction, path, "SELECT genre FROM genre_map", genre)?;
+    let rank = insertion_rank(
+        transaction,
+        path,
+        "SELECT genre FROM genre_map WHERE genre IS NOT NULL",
+        genre,
+    )?;
     transaction
         .execute(
             "INSERT INTO genre_map (id, genre, genre_order, is_unknown, has_music, \
@@ -500,6 +516,9 @@ fn insertion_rank(
     names_sql: &str,
     new_name: &str,
 ) -> Result<usize> {
+    // Firmware-generated DBs (e.g. Nano 7G fw 1.1.2) contain rows with NULL
+    // names (placeholder artist entries), and rusqlite's `get::<String>` fails
+    // on NULL — so every rank query filters NULLs out.
     let mut statement = transaction
         .prepare(names_sql)
         .map_err(|source| sqlite_error("prepare rank query", path, source))?;
